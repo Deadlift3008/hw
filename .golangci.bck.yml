@@ -30,6 +30,7 @@ issues:
         - dupl
         - gocyclo
         - gosec
+        - copyloopvar
 
 linters:
   disable-all: true
@@ -42,7 +43,6 @@ linters:
     - durationcheck
     - errorlint
     - exhaustive
-    - copyloopvar
     - funlen
     - gci
     - gocognit
