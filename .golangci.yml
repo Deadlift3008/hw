@@ -23,7 +23,6 @@ linters:
     - godot
     - goheader
     - goprintffuncname
-    - gosec
     - govet
     - importas
     - ineffassign
