@@ -13,8 +13,10 @@ type SafeWorkerManager struct {
 	mu               sync.Mutex
 	wg               sync.WaitGroup
 	currentErrors    int
-	errorLimit       int
 	currentTaskIndex int
+	tasks            []Task
+	errorLimit       int
+	exceedErrorLimit bool
 }
 
 func (s *SafeWorkerManager) IncreaseErrorCount() {
@@ -24,12 +26,42 @@ func (s *SafeWorkerManager) IncreaseErrorCount() {
 }
 
 func (s *SafeWorkerManager) takeNextTaskIndex() int {
+	s.mu.Lock()
+	s.currentTaskIndex++
+	s.mu.Unlock()
+	return s.currentTaskIndex
+}
 
+func (s *SafeWorkerManager) handle(i *int) {
+	err := s.tasks[*i]()
+
+	if err != nil {
+		s.IncreaseErrorCount()
+	}
+
+	if s.currentErrors >= s.errorLimit {
+		s.wg.Done()
+		s.exceedErrorLimit = true
+		return
+	}
+
+	nextTaskIndex := s.takeNextTaskIndex()
+
+	if nextTaskIndex > len(s.tasks)-1 {
+		s.wg.Done()
+		return
+	}
+
+	s.handle(&nextTaskIndex)
 }
 
 // Run starts tasks in n goroutines and stops its work when receiving m errors from tasks.
 func Run(tasks []Task, workerCount, errorLimit int) error {
-	workerManager := &SafeWorkerManager{errorLimit: errorLimit, currentTaskIndex: workerCount}
+	if workerCount < 1 {
+		return nil
+	}
+
+	workerManager := &SafeWorkerManager{currentTaskIndex: workerCount - 1, tasks: tasks, errorLimit: errorLimit}
 
 	for i := 0; i < workerCount; i++ {
 		if i+1 > len(tasks) {
@@ -37,22 +69,14 @@ func Run(tasks []Task, workerCount, errorLimit int) error {
 		}
 
 		workerManager.wg.Add(1)
-		go func(i *int) {
-			err := tasks[*i]()
-
-			if err == nil {
-				workerManager.IncreaseErrorCount()
-			}
-
-			//TODO: дополнительно брать задачу горутиной, реализовать через внешний счетчик который увеличивать (или подумать над другим решением)
-			//TODO: проверять на кол-во ошибок перед взятием в работу новой
-			//TODO: перенести эту логику в методы SafeWorkerManager(?)
-
-			workerManager.wg.Done()
-		}(&i)
+		go workerManager.handle(&i)
 	}
 
 	workerManager.wg.Wait()
 
-	return nil
+	if workerManager.exceedErrorLimit {
+		return ErrErrorsLimitExceeded
+	} else {
+		return nil
+	}
 }
