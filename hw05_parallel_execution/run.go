@@ -3,68 +3,12 @@ package hw05parallelexecution
 import (
 	"errors"
 	"sync"
+	"sync/atomic"
 )
 
 var ErrErrorsLimitExceeded = errors.New("errors limit exceeded")
 
 type Task func() error
-
-type SafeWorkerManager struct {
-	mu               sync.Mutex
-	wg               sync.WaitGroup
-	currentErrors    int
-	currentTaskIndex int
-	tasks            []Task
-	errorLimit       int
-	exceedErrorLimit bool
-}
-
-func (s *SafeWorkerManager) IncreaseErrorCount() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.currentErrors++
-
-	if s.currentErrors >= s.errorLimit {
-		s.exceedErrorLimit = true
-		return true
-	}
-
-	return false
-}
-
-func (s *SafeWorkerManager) takeNextTask() (Task, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.currentTaskIndex++
-
-	if s.currentTaskIndex > len(s.tasks)-1 {
-		return nil, false
-	}
-
-	return s.tasks[s.currentTaskIndex], true
-}
-
-func (s *SafeWorkerManager) handle(task *Task) {
-	err := (*task)()
-	if err != nil {
-		exceedErrorLimit := s.IncreaseErrorCount()
-
-		if exceedErrorLimit {
-			s.wg.Done()
-			return
-		}
-	}
-
-	nextTask, exist := s.takeNextTask()
-
-	if !exist {
-		s.wg.Done()
-		return
-	}
-
-	s.handle(&nextTask)
-}
 
 // Run starts tasks in n goroutines and stops its work when receiving m errors from tasks.
 func Run(tasks []Task, workerCount, errorLimit int) error {
@@ -72,26 +16,45 @@ func Run(tasks []Task, workerCount, errorLimit int) error {
 		return nil
 	}
 
-	normalizedErrorLimit := errorLimit
-
-	if normalizedErrorLimit < 0 {
-		normalizedErrorLimit = 0
+	if errorLimit < 1 {
+		errorLimit = 1
 	}
 
-	workerManager := &SafeWorkerManager{currentTaskIndex: workerCount - 1, tasks: tasks, errorLimit: normalizedErrorLimit}
+	taskCh := make(chan Task)
+	var errorCount int32
+
+	wg := sync.WaitGroup{}
 
 	for i := 0; i < workerCount; i++ {
-		if i+1 > len(tasks) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for task := range taskCh {
+				if atomic.LoadInt32(&errorCount) >= int32(errorLimit) {
+					return
+				}
+
+				taskErr := task()
+
+				if taskErr != nil {
+					atomic.AddInt32(&errorCount, 1)
+				}
+			}
+		}()
+	}
+
+	for _, task := range tasks {
+		if atomic.LoadInt32(&errorCount) >= int32(errorLimit) {
 			break
 		}
 
-		workerManager.wg.Add(1)
-		go workerManager.handle(&tasks[i])
+		taskCh <- task
 	}
 
-	workerManager.wg.Wait()
+	close(taskCh)
+	wg.Wait()
 
-	if workerManager.exceedErrorLimit {
+	if errorCount >= int32(errorLimit) {
 		return ErrErrorsLimitExceeded
 	}
 
