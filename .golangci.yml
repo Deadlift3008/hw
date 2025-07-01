@@ -58,6 +58,7 @@ linters:
           allow:
             - $gostd
             - github.com/stretchr/testify
+            - go.uber.org/goleak
     funlen:
       lines: 150
       statements: 80
@@ -71,7 +72,6 @@ linters:
     rules:
       - linters:
           - dupl
-          - errcheck
           - gocyclo
           - gosec
         path: _test\.go
@@ -108,3 +108,4 @@ linters-settings:
         allow:
           - $gostd
           - github.com/stretchr/testify/require
+          - go.uber.org/goleak
