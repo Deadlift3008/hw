@@ -72,7 +72,6 @@ linters:
     rules:
       - linters:
           - dupl
-          - errcheck
           - gocyclo
           - gosec
         path: _test\.go
