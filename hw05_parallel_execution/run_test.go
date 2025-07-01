@@ -54,7 +54,11 @@ func TestRun(t *testing.T) {
 			})
 		}
 
-		go Run(tasks, workersCount, 3)
+		var err error
+
+		go func() {
+			err = Run(tasks, workersCount, 3)
+		}()
 
 		time.Sleep(time.Millisecond * time.Duration(100))
 
@@ -62,6 +66,7 @@ func TestRun(t *testing.T) {
 		wg.Wait()
 
 		require.Equal(t, int32(workersCount), maxActiveWorkers)
+		require.Nil(t, err, "Got error - %v", err)
 	})
 
 	t.Run("if were errors in first M tasks, than finished not more N+M tasks", func(t *testing.T) {
