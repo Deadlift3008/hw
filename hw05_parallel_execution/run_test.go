@@ -54,19 +54,21 @@ func TestRun(t *testing.T) {
 			})
 		}
 
-		var err error
+		errCh := make(chan error)
 
 		go func() {
-			err = Run(tasks, workersCount, 3)
+			err := Run(tasks, workersCount, 3)
+			errCh <- err
 		}()
 
 		time.Sleep(time.Millisecond * time.Duration(100))
 
 		close(release)
 		wg.Wait()
+		runErr := <-errCh
 
 		require.Equal(t, int32(workersCount), maxActiveWorkers)
-		require.Nil(t, err, "Got error - %v", err)
+		require.Nil(t, runErr, "Got error - %v", runErr)
 	})
 
 	t.Run("if were errors in first M tasks, than finished not more N+M tasks", func(t *testing.T) {
