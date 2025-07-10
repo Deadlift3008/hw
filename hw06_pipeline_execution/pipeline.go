@@ -18,6 +18,27 @@ type Result struct {
 	index int
 }
 
+type DoneState struct {
+	doneChannel In
+	done        bool
+	mu          sync.Mutex
+}
+
+func (d *DoneState) startListen() {
+	go func() {
+		<-d.doneChannel
+		d.mu.Lock()
+		d.done = true
+		d.mu.Unlock()
+	}()
+}
+
+func (d *DoneState) isDone() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.done
+}
+
 func readValueChannel(channelToRead In, doneChannel In) (interface{}, bool, bool) {
 	select {
 	case <-doneChannel:
@@ -46,56 +67,71 @@ func readResultValueChannel(channelToRead <-chan Result, doneChannel In) (*Resul
 	}
 }
 
-func writeValueChannel(channelToWrite chan interface{}, doneChannel In, valueToWrite interface{}) {
-	select {
-	case channelToWrite <- valueToWrite:
-	case <-doneChannel:
-	}
-}
-
 func executeStages(in In, done In, sortCh chan<- Result, stages ...Stage) {
-	wg := sync.WaitGroup{}
+	wg := &sync.WaitGroup{}
 	var i int
-	defer wg.Wait()
 	defer close(sortCh)
+
+	doneState := &DoneState{doneChannel: done}
+	doneState.startListen()
 
 	for {
 		value, isOpened, isDone := readValueChannel(in, done)
 
 		if !isOpened || isDone {
-			return
+			break
 		}
 
 		wg.Add(1)
-		go func(i int) {
-			currentValue := value
+		go func(i int, v interface{}) {
+			currentValue := v
 			defer wg.Done()
 
 			for _, stage := range stages {
+				if doneState.isDone() {
+					return
+				}
 				ch := make(chan interface{})
 				stageCh := stage(ch)
 
 				go func() {
-					writeValueChannel(ch, done, currentValue)
+					defer close(ch)
+
+					select {
+					case <-done:
+						return
+					default:
+						select {
+						case ch <- currentValue:
+						case <-done:
+							return
+						}
+					}
 				}()
 
-				newValue, _, isDone := readValueChannel(stageCh, done)
-
-				if isDone {
+				if doneState.isDone() {
 					return
+				}
+
+				newValue, ok := <-stageCh
+
+				if !ok {
+					continue
 				}
 
 				currentValue = newValue
 			}
 
-			select {
-			case <-done:
+			if doneState.isDone() {
 				return
-			case sortCh <- Result{value: currentValue, index: i}:
 			}
-		}(i)
+
+			sortCh <- Result{value: currentValue, index: i}
+		}(i, value)
 		i++
 	}
+
+	wg.Wait()
 }
 
 func sortResults(sortCh <-chan Result, resultCh chan<- interface{}, done In) {
@@ -105,12 +141,12 @@ func sortResults(sortCh <-chan Result, resultCh chan<- interface{}, done In) {
 	for {
 		result, isOpened, isDone := readResultValueChannel(sortCh, done)
 
-		if !isOpened {
-			break
-		}
-
 		if isDone {
 			return
+		}
+
+		if !isOpened {
+			break
 		}
 
 		results = append(results, *result)
