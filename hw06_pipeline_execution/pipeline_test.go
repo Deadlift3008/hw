@@ -126,10 +126,10 @@ func TestAllStageStop(t *testing.T) {
 
 		// Abort after 200ms
 		abortDur := sleepPerStage * 2
-		go func() {
+		go func(abortDur time.Duration) {
 			<-time.After(abortDur)
 			close(done)
-		}()
+		}(abortDur)
 
 		go func() {
 			for _, v := range data {
@@ -145,6 +145,5 @@ func TestAllStageStop(t *testing.T) {
 		wg.Wait()
 
 		require.Len(t, result, 0)
-
 	})
 }
